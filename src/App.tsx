@@ -138,6 +138,7 @@ export default function App() {
   // User Authentication & Profile details
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [selectedLevel, setSelectedLevel] = useState<ProficiencyLevel>("Beginner");
   const [selectedCategory, setSelectedCategory] = useState<ContentCategory>("Short Story");
   
@@ -282,12 +283,15 @@ export default function App() {
   // Account creation via standard Google signInWithPopup
   const handleGoogleSignIn = async () => {
     setAuthLoading(true);
+    setAuthError(null);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
       triggerSuccessToast("Bienvenue ! Content de vous revoir.");
     } catch (error: any) {
       console.error("Auth google exception:", error);
+      const errCode = error?.code || error?.message || String(error);
+      setAuthError(errCode);
       triggerSuccessToast("Auth failed or cancelled.");
       setAuthLoading(false);
     }
@@ -575,6 +579,49 @@ export default function App() {
 
             {/* Google-based Login trigger */}
             <div className="space-y-3">
+              {authError && (
+                <div className="p-4 bg-[#231212] border border-[#ff4d4d]/30 rounded-2xl text-xs text-red-200 space-y-3">
+                  <div className="flex items-start gap-2.5 font-bold uppercase tracking-wider text-[#ff4d4d]">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-extrabold text-xs">Échec d'Authentification</p>
+                      <p className="font-mono text-[10px] lowercase text-[#ff8080] mt-0.5 select-all">{authError}</p>
+                    </div>
+                  </div>
+                  
+                  {/* Dynamic domain tutorial if it's unauthorized-domain or accessed externally */}
+                  {(authError.includes("unauthorized-domain") || authError.includes("auth/unauthorized-domain") || (typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname))) && (
+                    <div className="pt-2.5 border-t border-[#ff4d4d]/20 space-y-2 mt-1">
+                      <p className="text-gray-300 text-[11px] leading-relaxed">
+                        💡 **Comment autoriser ce domaine pour Google Login :**
+                      </p>
+                      <ol className="list-decimal pl-4.5 space-y-2 text-[11.5px] text-gray-300 leading-relaxed font-serif">
+                        <li>
+                          Ouvrez la{" "}
+                          <a 
+                            href="https://console.firebase.google.com/project/gen-lang-client-0965631692/authentication/settings"
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[#f27d26] underline hover:text-[#f49551] font-mono font-bold inline-flex items-center gap-0.5"
+                          >
+                            Console Firebase <ExternalLink className="w-3 h-3 inline" />
+                          </a>.
+                        </li>
+                        <li>
+                          Allez dans l'onglet <strong>Settings</strong> (Paramètres) &rarr; <strong>Authorized domains</strong> (Domaines autorisés).
+                        </li>
+                        <li>
+                          Cliquez sur <strong>Add domain</strong> (Ajouter un domaine) et collez votre hôte actuel : <strong className="text-white select-all bg-[#3d1818] px-1.5 py-0.5 rounded border border-[#ff4d4d]/25 font-mono text-[11px]">{typeof window !== "undefined" ? window.location.hostname : "votre-app.vercel.app"}</strong>
+                        </li>
+                      </ol>
+                      <p className="text-[10px] text-gray-400 leading-normal pt-1.5 italic font-sans">
+                        Une fois ajouté, actualisez cette page pour pouvoir vous connecter !
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button
                 id="google-login-btn"
                 onClick={handleGoogleSignIn}
