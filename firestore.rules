@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net default catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper: Valid ID checks to prevent poisoning and overflow
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Is valid User Profile logic
+    function isValidUser(data) {
+      return data.uid == request.auth.uid 
+        && data.email is string && data.email.size() <= 200
+        && (data.proficiency == 'Beginner' || data.proficiency == 'Intermediate' || data.proficiency == 'Advanced');
+    }
+
+    // Is valid Flashcard configuration
+    function isValidFlashcard(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId == request.auth.uid
+        && data.word is string && data.word.size() <= 100
+        && data.translation is string && data.translation.size() <= 200
+        && data.pronunciation is string && data.pronunciation.size() <= 150
+        && data.grammaticalContext is string && data.grammaticalContext.size() <= 150
+        && data.contextSentence is string && data.contextSentence.size() <= 1000
+        && data.frenchExample is string && data.frenchExample.size() <= 1000
+        && data.englishExample is string && data.englishExample.size() <= 1000
+        && data.category is string && data.category.size() <= 50
+        && data.box is int && data.box >= 1 && data.box <= 5
+        && data.nextReviewDate is int
+        && data.createdAt is int;
+    }
+
+    // Match routes
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) 
+        && isValidUser(request.resource.data)
+        && request.resource.data.uid == resource.data.uid;
+      allow delete: if isOwner(userId);
+      
+      match /flashcards/{cardId} {
+        allow read, delete: if isOwner(userId);
+        allow create: if isOwner(userId) 
+          && isValidId(cardId) 
+          && isValidFlashcard(request.resource.data);
+        allow update: if isOwner(userId)
+          && isValidFlashcard(request.resource.data)
+          && request.resource.data.id == resource.data.id;
+      }
+    }
+  }
+}

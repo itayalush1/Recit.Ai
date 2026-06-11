@@ -1,0 +1,6 @@
+{
+  "name": "RecitAI",
+  "description": "A beautiful, mobile-first French language learning companion with interactive stories, songs, news, reading assistance, and smart flashcards powered by Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile containing persistent French proficiency selection",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "proficiency": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "proficiency"]
+    },
+    "Flashcard": {
+      "title": "Flashcard Card",
+      "description": "Leitner spaced repetition vocabulary card",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "word": { "type": "string" },
+        "translation": { "type": "string" },
+        "pronunciation": { "type": "string" },
+        "grammaticalContext": { "type": "string" },
+        "contextSentence": { "type": "string" },
+        "frenchExample": { "type": "string" },
+        "englishExample": { "type": "string" },
+        "proficiency": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"] },
+        "category": { "type": "string" },
+        "box": { "type": "integer" },
+        "nextReviewDate": { "type": "integer" },
+        "createdAt": { "type": "integer" }
+      },
+      "required": ["id", "userId", "word", "translation"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User account configuration profile"
+    },
+    "/users/{userId}/flashcards/{cardId}": {
+      "schema": "Flashcard",
+      "description": "User specific personal spaced repetition flashcards"
+    }
+  }
+}
