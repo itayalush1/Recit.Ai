@@ -753,6 +753,13 @@ export default function App() {
                               className="bg-[#121212] border border-[#222222] rounded-xl p-4 space-y-3 hover:border-[#333333] transition-all"
                             >
                               <div className="text-sm leading-relaxed text-white">
+                                {segment.topic && (
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="inline-flex items-center rounded-md bg-[#f27d26]/10 px-2.5 py-1 text-xs font-extrabold font-mono uppercase tracking-wider text-[#f27d26] border border-[#f27d26]/20">
+                                      ✨ {segment.topic}
+                                    </span>
+                                  </div>
+                                )}
                                 {segment.speaker && (
                                   <strong className="text-[#f27d26] font-mono text-[10px] uppercase tracking-wider block mb-1">
                                     {segment.speaker} :

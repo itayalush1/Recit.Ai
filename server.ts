@@ -43,7 +43,7 @@ app.post("/api/generate-content", async (req, res) => {
   try {
     const ai = getGeminiClient();
     const isNews = category === "Latest News";
-
+ 
     // Build focused prompts based on category & proficiency level
     let promptText = "";
     if (isNews) {
@@ -52,13 +52,23 @@ app.post("/api/generate-content", async (req, res) => {
         month: 'long',
         day: 'numeric'
       });
-      promptText = `Focus on generating a comprehensive international news summary of real or realistic events of the past week (the week leading up to ${currentDateString}) in exactly ONE of the following topics: Sports, Politics (French or world), Economics, or Science.
-      You must select EXACTLY ONE topic dynamically from these four (Sports, Politics, Economics, Science) and write a highly relevant, deeply informative, and realistic report.
-      The article MUST be highly detailed and of a satisfying length (at least 4 to 6 full informative paragraphs in the 'items' list, just like the 'Short Story' section has rich paragraph-level blocks; do NOT make it a short bullet list or single short statement). 
-      It should read exactly like a premium, in-depth weekly summary, news column, or reporter's dispatch from high-quality international French media outlets (such as Le Monde, France 24, TV5Monde, Libération, or Le Figaro/L'Équipe/Sciences et Avenir).
-      Adapt and simplify the grammatical complexity precisely for a French language learner with a "${level}" proficiency level (A1/A2 simple sentences with present/simple vocabulary for Beginner, B1/B2 moderate complexity for Intermediate, and authentic journalistic French for Advanced).
-      In the 'metadata' field, specify the Chosen Topic (e.g., "Politics", "Science", "Economics", "Sports"), the sourced outlet, and the precise publication date (which must be close to ${currentDateString}).
-      Ensure each item in the 'items' list represents a full detailed paragraph with its translation, so the learner gets an immersive reading experience.`;
+      promptText = `Generate an extremely detailed, comprehensive, high-density international news report summarizing the major global events of the past week (the week leading up to ${currentDateString}).
+      This report must NOT be restricted to a single topic; instead, it is a multi-subject synthesis with a major, dominant focus on international politics, geopolitics (relations internationales, alliances, conflits, sommets diplomatiques), followed by other vital developments in global economics, science/technology, and environmental issues.
+      
+      To make the news truly immersive and informative, you MUST discuss specific world leaders (such as Emmanuel Macron, Joe Biden, Xi Jinping, Olaf Scholz, Keir Starmer, etc.), refer to precise summits, policies, or developments, and integrate direct/indirect quotes in French where appropriate. Avoid generalities like "world leaders met to discuss issues"; instead tell the learner exactly WHO, WHERE, WHAT, and WHY, with rich details.
+      
+      Structure the report into distinct subject areas. The total list of 'items' must contain exactly 5 to 8 rich, multi-sentence paragraphs (each at least 3-5 sentences long to provide a thorough journalistic summary).
+      For each item in the 'items' array, you MUST populate:
+      1. 'topic': A short, clear category name (e.g., "GÉOPOLITIQUE INTERNATIONALE", "ÉCONOMIE MONDIALE", "SCIENCE & INNOVATION", "CLIMAT & ENVIRONNEMENT"). This topic MUST be placed ONLY in the 'topic' field. Do NOT include brackets like [GÉOPOLITIQUE] inside the 'french' or 'english' text itself.
+      2. 'french': The detailed news paragraph in French at the requested level.
+      3. 'english': The highly polished English translation of the news paragraph.
+      
+      Adapt the French grammatical complexity and vocabulary strictly to a "${level}" proficiency level to help the user learn French and stay on top of world affairs:
+      - Beginner (A1/A2): Use active voice, simple tenses (présent, occasionally passé composé), clear/active subject-verb-object structures, and accessible common vocabulary. Do NOT omit named leaders or specific countries, but explain their actions simply.
+      - Intermediate (B1/B2): Introduce compound structures, standard press vocabulary, varied tenses (futur simple, imparfait, conditionnel), and idiomatic French of moderate complexity.
+      - Advanced (C1/C2): Provide authentic, elegant, premium journalistic level French (resembling Le Monde or Libération). Use complex syntax (passif, subjonctif, participe présent, terms of diplomacy and geopolitics).
+      
+      In the 'metadata' field, specify "Synthèse Géopolitique & Actualités Globales" and the date range leading up to ${currentDateString}.`;
     } else if (category === "Conversation") {
       promptText = `Create a realistic conversation/dialogue in French between 2 characters.
       Aesthetic: Practical everyday situations (ordering food, asking for directions, planning a trip, workspace dynamic).
@@ -118,7 +128,8 @@ app.post("/api/generate-content", async (req, res) => {
                     properties: {
                       french: { type: Type.STRING, description: "The sentence/paragraph or lyric line in French." },
                       english: { type: Type.STRING, description: "English translation of this segment." },
-                      speaker: { type: Type.STRING, description: "Optional speaker name for conversations (e.g. Sophie, Jean). Otherwise omit or leave dry." }
+                      speaker: { type: Type.STRING, description: "Optional speaker name for conversations (e.g. Sophie, Jean). Otherwise omit or leave dry." },
+                      topic: { type: Type.STRING, description: "Optional category/subject tag name, used primarily for Latest News to group developments (e.g. GÉOPOLITIQUE INTERNATIONALE, ÉCONOMIE MONDIALE, SCIENCE, CLIMAT)" }
                     },
                     required: ["french", "english"]
                   }

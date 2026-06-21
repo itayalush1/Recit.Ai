@@ -11,6 +11,7 @@ export interface ContentItem {
   french: string;
   english: string;
   speaker?: string;
+  topic?: string;
 }
 
 export interface GeneratedMaterial {
