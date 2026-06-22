@@ -854,6 +854,25 @@ export default function App() {
                             </div>
                           </div>
                         )}
+
+                        {material.sources && material.sources.length > 0 && (
+                          <div className="space-y-2 pt-2.5 border-t border-[#222222]">
+                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">
+                              <ExternalLink className="w-3.5 h-3.5 text-[#f27d26]" />
+                              <span>Sources d'actualité réelles</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {material.sources.map((source, index) => (
+                                <span
+                                  key={index}
+                                  className="inline-flex items-center gap-1 rounded bg-[#1e130c] px-2 py-0.5 text-[10px] font-extrabold font-mono uppercase tracking-wider text-[#f27d26] border border-[#f27d26]/20"
+                                >
+                                  📰 {source}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

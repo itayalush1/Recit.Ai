@@ -42,12 +42,35 @@ app.post("/api/generate-content", async (req, res) => {
  
     // Build focused prompts based on category & proficiency level
     let promptText = "";
+    let newsContext = "";
+
     if (isNews) {
       const currentDateString = new Date().toLocaleDateString('fr-FR', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
       });
+
+      try {
+        console.log("[Vercel Serverless] Using Google Search Grounding to fetch live, factual news reports from the past week...");
+        const searchParams = `Summarize the top 6 to 8 major specific global news events (with massive focus on international relations, geopolitics, world leaders, specific summits, agreements, and key milestones in climate/economics/tech) that happened during the week leading up to ${currentDateString}. Ensure you include specific names of world leaders (such as Joe Biden, Donald Trump, Keir Starmer, Xi Jinping, Emmanuel Macron, Olaf Scholz, Narendra Modi, etc.), exact locations, summits, and direct quotes or numbers.`;
+        
+        const searchResp = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: searchParams,
+          config: {
+            tools: [{ googleSearch: {} }]
+          }
+        });
+
+        if (searchResp && searchResp.text) {
+          newsContext = searchResp.text;
+          console.log("[Vercel Serverless] Google Search context retrieved successfully.");
+        }
+      } catch (err: any) {
+        console.warn("[Vercel Serverless] Google Search grounding failed, using default generator:", err.message || err);
+      }
+
       promptText = `Generate an extremely detailed, comprehensive, high-density international news report summarizing the major global events of the past week (the week leading up to ${currentDateString}).
       This report must NOT be restricted to a single topic; instead, it is a multi-subject synthesis with a major, dominant focus on international politics, geopolitics (relations internationales, alliances, conflits, sommets diplomatiques), followed by other vital developments in global economics, science/technology, and environmental issues.
       
@@ -64,7 +87,20 @@ app.post("/api/generate-content", async (req, res) => {
       - Intermediate (B1/B2): Introduce compound structures, standard press vocabulary, varied tenses (futur simple, imparfait, conditionnel), and idiomatic French of moderate complexity.
       - Advanced (C1/C2): Provide authentic, elegant, premium journalistic level French (resembling Le Monde or Libération). Use complex syntax (passif, subjonctif, participe présent, terms of diplomacy and geopolitics).
       
-      In the 'metadata' field, specify "Synthèse Géopolitique & Actualités Globales" and the date range leading up to ${currentDateString}.`;
+      In the 'metadata' field, specify "Synthèse Géopolitique & Actualités Globales" and the date range leading up to ${currentDateString}.
+      In the 'sources' field of the JSON output, you MUST list 2 to 4 real high-quality news publication domains or outlets from which these events are sourced (e.g., ["Le Monde", "France 24", "Le Figaro", "Reuters", "AFP"]) based on the provided grounded search context.`;
+
+      if (newsContext) {
+        promptText = `You are provided with real-time Google Search context summarizing the real, factual world events of the past week:
+        
+        === SEARCH REALITY CONTEXT ===
+        ${newsContext}
+        ==============================
+        
+        Using the above search-grounded facts as your sole news source and reference material, translate, elaborate, and construct the requested French learning content according to these exact instructions:
+        
+        ` + promptText;
+      }
     } else if (category === "Conversation") {
       promptText = `Create a realistic conversation/dialogue in French between 2 characters.
       Aesthetic: Practical everyday situations (ordering food, asking for directions, planning a trip, workspace dynamic).
@@ -142,6 +178,11 @@ app.post("/api/generate-content", async (req, res) => {
                     },
                     required: ["word", "translation"]
                   }
+                },
+                sources: {
+                  type: Type.ARRAY,
+                  description: "Optional list of real news sources, agencies, or publication names related to this event summary.",
+                  items: { type: Type.STRING }
                 }
               },
               required: ["title", "titleTranslation", "items", "explanation", "keyVocabulary"]

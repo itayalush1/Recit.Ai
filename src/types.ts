@@ -24,6 +24,7 @@ export interface GeneratedMaterial {
     word: string;
     translation: string;
   }[];
+  sources?: string[];
 }
 
 export interface WordAnalysis {
