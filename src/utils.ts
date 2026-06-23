@@ -77,3 +77,77 @@ export function scheduleLeitner(
     nextReviewDate,
   };
 }
+
+/**
+ * Highly resilient, incremental JSON parser that attempts to fix and parse truncated JSON.
+ * It tracks open braces/brackets/quotes, closes them safely, strips trailing key/value commas if needed, and returns the partially parsed object.
+ */
+export function parsePartialJSON(jsonStr: string): any {
+  const trimmed = jsonStr.trim();
+  if (!trimmed) return null;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (e) {
+    // Falls back to auto-closing strategy
+  }
+
+  let closedJson = trimmed;
+  let insideString = false;
+  let escapeNext = false;
+  const stack: string[] = [];
+
+  for (let i = 0; i < closedJson.length; i++) {
+    const char = closedJson[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (char === '"') {
+      insideString = !insideString;
+      continue;
+    }
+    if (!insideString) {
+      if (char === '{' || char === '[') {
+        stack.push(char);
+      } else if (char === '}' || char === ']') {
+        stack.pop();
+      }
+    }
+  }
+
+  if (insideString) {
+    closedJson += '"';
+  }
+
+  // Remove any trailing commas that would produce syntax errors right before closing brackets
+  const rawClean = closedJson.trim();
+  if (rawClean.endsWith(',')) {
+    closedJson = rawClean.slice(0, -1);
+  }
+
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const openChar = stack[i];
+    if (openChar === '{') {
+      closedJson += '}';
+    } else if (openChar === '[') {
+      closedJson += ']';
+    }
+  }
+
+  // Clean trailing commas that sit right before closing braces/brackets (e.g., {"a": 1, })
+  closedJson = closedJson
+    .replace(/,\s*}/g, '}')
+    .replace(/,\s*]/g, ']');
+
+  try {
+    return JSON.parse(closedJson);
+  } catch (e) {
+    return null;
+  }
+}
+
