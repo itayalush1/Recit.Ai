@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   BookOpen, 
   Plus, 
@@ -29,7 +29,7 @@ import {
   WordAnalysis, 
   Flashcard 
 } from "./types";
-import { tokenizeFrenchText, scheduleLeitner, parsePartialJSON } from "./utils";
+import { tokenizeFrenchText, scheduleLeitner } from "./utils";
 
 // Firebase App integrations
 import { auth, db } from "./firebase";
@@ -135,24 +135,15 @@ export default function App() {
     return true;
   });
 
-  const abortControllerRef = useRef<AbortController | null>(null);
-
   // User Authentication & Profile details
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [selectedLevel, setSelectedLevel] = useState<ProficiencyLevel>("Beginner");
-  const [selectedCategory, setSelectedCategory] = useState<ContentCategory>("Latest News");
+  const [selectedCategory, setSelectedCategory] = useState<ContentCategory>("Short Story");
   
   // Transient state for sign-up level picker
   const [initialSignUpLevel, setInitialSignUpLevel] = useState<ProficiencyLevel>("Beginner");
-
-  const handleStopGeneration = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    setIsGenerating(false);
-  };
   
   const [material, setMaterial] = useState<GeneratedMaterial>(() => {
     const saved = localStorage.getItem("current_french_material");
@@ -195,18 +186,6 @@ export default function App() {
       document.documentElement.classList.remove("dark");
     }
   }, [darkMode]);
-
-  // Listen to system settings changes
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = (e: MediaQueryListEvent) => {
-      // If the user hasn't explicitly clicked light/dark mode (or we want automatic syncing)
-      // we can update state.
-      setDarkMode(e.matches);
-    };
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, []);
 
   // Persist current lessons on local device for seamless sessions
   useEffect(() => {
@@ -352,16 +331,6 @@ export default function App() {
     setGenerationError(null);
     setSelectedWord(null);
     setWordAnalysis(null);
-    setMaterial({
-      title: "Génération en cours...",
-      titleTranslation: "Generation in progress...",
-      items: [],
-      explanation: "",
-      keyVocabulary: []
-    });
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
 
     try {
       const response = await fetch("/api/generate-content", {
@@ -370,8 +339,7 @@ export default function App() {
         body: JSON.stringify({
           category: selectedCategory,
           level: selectedLevel
-        }),
-        signal: controller.signal
+        })
       });
 
       if (!response.ok) {
@@ -379,45 +347,13 @@ export default function App() {
         throw new Error(errData.error || `HTTP error! status: ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Le flux de réponse n'est pas supporté par votre explorateur.");
-      }
-
-      const decoder = new TextDecoder("utf-8");
-      let accumulatedText = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (value) {
-          accumulatedText += decoder.decode(value, { stream: !done });
-          const parsed = parsePartialJSON(accumulatedText);
-          if (parsed && typeof parsed === "object") {
-            setMaterial(parsed);
-          }
-        }
-        if (done) break;
-      }
+      const data: GeneratedMaterial = await response.json();
+      setMaterial(data);
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.log("Generation stopped by user");
-        setMaterial(prev => {
-          const hasItems = prev && prev.items && prev.items.length > 0;
-          return {
-            title: hasItems ? prev.title : "Génération interrompue",
-            titleTranslation: hasItems ? prev.titleTranslation : "Generation cancelled",
-            items: prev?.items || [],
-            explanation: prev?.explanation || "",
-            keyVocabulary: prev?.keyVocabulary || []
-          };
-        });
-        return;
-      }
       console.error(err);
       setGenerationError(err.message || "Impossible de générer le cours du pupitre. Veuillez réessayer.");
     } finally {
       setIsGenerating(false);
-      abortControllerRef.current = null;
     }
   };
 
@@ -559,26 +495,26 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-[#070707] text-gray-800 dark:text-[#e5e5e5] font-sans transition-colors duration-200 relative overflow-x-hidden flex flex-col justify-between">
+    <div className="min-h-screen bg-[#070707] text-[#e5e5e5] font-sans transition-colors duration-200 relative overflow-x-hidden flex flex-col justify-between">
       
       {/* Decorative Editorial Background Elements */}
       <div className="absolute top-12 left-10 opacity-[0.03] pointer-events-none hidden lg:block select-none">
-        <div className="text-[100px] font-serif leading-none rotate-[-6deg] font-black text-gray-900 dark:text-white">récit.Ai</div>
+        <div className="text-[100px] font-serif leading-none rotate-[-6deg] font-black text-white">récit.Ai</div>
         <div className="text-[50px] font-serif italic ml-20 text-[#f27d26]">Français Express</div>
       </div>
       <div className="absolute bottom-20 right-10 text-right opacity-[0.03] pointer-events-none hidden lg:block select-none">
-        <p className="text-xs uppercase tracking-[0.6em] mb-2 text-gray-900 dark:text-white">Éducation Spacée & Traduction Directe</p>
-        <p className="text-3xl font-serif font-bold text-gray-900 dark:text-white">Édition Journal 2026</p>
+        <p className="text-xs uppercase tracking-[0.6em] mb-2 text-white">Éducation Spacée & Traduction Directe</p>
+        <p className="text-3xl font-serif font-bold text-white">Édition Journal 2026</p>
       </div>
 
       {/* Main Container */}
-      <div className="w-full max-w-[480px] mx-auto min-h-screen bg-white dark:bg-[#0f0f0f] border-x border-gray-200 dark:border-[#1a1a1a] shadow-2xl flex flex-col relative">
+      <div className="w-full max-w-[480px] mx-auto min-h-screen bg-[#0f0f0f] border-x border-[#1a1a1a] shadow-2xl flex flex-col relative">
         
         {/* UPPER BRAND HEADER */}
-        <header className="p-5 pb-3 border-b border-gray-200 dark:border-[#222222] sticky top-0 bg-white/90 dark:bg-[#0f0f0fd9] backdrop-blur-md z-40">
+        <header className="p-5 pb-3 border-b border-[#222222] sticky top-0 bg-[#0f0f0fd9] backdrop-blur-md z-40">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-[26px] font-serif font-black italic text-gray-900 dark:text-white tracking-tight leading-none flex items-center gap-1.5">
+              <h1 className="text-[26px] font-serif font-black italic text-white tracking-tight leading-none flex items-center gap-1.5">
                 récit.Ai <span className="text-xs font-mono font-normal uppercase tracking-widest text-[#f27d26] bg-[#f27d26]/10 px-1.5 py-0.5 rounded">DIRECT</span>
               </h1>
             </div>
@@ -602,20 +538,20 @@ export default function App() {
         ) : !user ? (
           <div className="flex-1 p-6 flex flex-col justify-center space-y-8 animate-fade-in">
             <div className="text-center space-y-3">
-              <span className="px-3 py-1 bg-[#fdf3ec] dark:bg-[#1a130e] text-[#f27d26] border border-[#f27d26]/40 text-[10px] font-mono uppercase tracking-widest rounded-full">
+              <span className="px-3 py-1 bg-[#1a130e] text-[#f27d26] border border-[#f27d26]/40 text-[10px] font-mono uppercase tracking-widest rounded-full">
                 Compte d'Apprentissage Persistent
               </span>
-              <h2 className="text-3xl font-serif font-bold italic tracking-tight text-gray-900 dark:text-white">
+              <h2 className="text-3xl font-serif font-bold italic tracking-tight text-white">
                 Rejoignez la Tribune
               </h2>
-              <p className="text-xs text-gray-550 dark:text-gray-400 max-w-sm mx-auto leading-relaxed">
+              <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
                 Connectez-vous pour configurer votre niveau pour toujours et sauvegarder votre dictionnaire dans le cloud.
               </p>
             </div>
 
             {/* Level selection ONCE at sign up */}
-            <div className="space-y-3 bg-[#fafaf9] dark:bg-[#131313] border border-gray-200 dark:border-[#222222] p-4 rounded-2xl">
-              <label className="block text-gray-500 dark:text-gray-450 font-bold text-[10px] uppercase tracking-wider font-mono">
+            <div className="space-y-3 bg-[#131313] border border-[#222222] p-4 rounded-2xl">
+              <label className="block text-gray-450 font-bold text-[10px] uppercase tracking-wider font-mono">
                 Choisissez votre Niveau de Français :
               </label>
               
@@ -631,10 +567,10 @@ export default function App() {
                     className={`w-full text-left p-3 rounded-xl border transition-all flex flex-col ${
                       initialSignUpLevel === l.value 
                         ? "border-[#f27d26] bg-[#f27d26]/5 ring-1 ring-[#f27d26]" 
-                        : "border-gray-200 dark:border-[#222] bg-white dark:bg-[#0c0c0c] hover:border-gray-300 dark:hover:border-[#333]"
+                        : "border-[#222] bg-[#0c0c0c] hover:border-[#333]"
                     }`}
                   >
-                    <span className="text-xs font-bold text-gray-900 dark:text-white">{l.label}</span>
+                    <span className="text-xs font-bold text-white">{l.label}</span>
                     <span className="text-[10px] text-gray-500 mt-0.5">{l.desc}</span>
                   </button>
                 ))}
@@ -689,7 +625,7 @@ export default function App() {
               <button
                 id="google-login-btn"
                 onClick={handleGoogleSignIn}
-                className="w-full py-3 bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-black font-black uppercase text-xs tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+                className="w-full py-3 bg-white hover:bg-gray-100 text-black font-black uppercase text-xs tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                   <path
@@ -733,27 +669,19 @@ export default function App() {
                   setSelectedCategory={setSelectedCategory}
                   isGenerating={isGenerating}
                   onGenerate={handleGenerateContent}
-                  onStopGenerate={handleStopGeneration}
                 />
 
                 {/* GENERATION STATE - LOADING */}
-                {isGenerating && (!material || !material.items || material.items.length === 0) && (
-                  <div id="ai-loading-container" className="py-12 text-center space-y-4 bg-[#fafafa] dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-[#222222] p-6 animate-pulse flex flex-col items-center">
-                    <div className="inline-flex py-1.5 px-3 rounded-full bg-[#fdf3ec] dark:bg-[#201d1a] border border-[#f27d26]/30 text-[#f27d26] text-[10px] font-mono uppercase tracking-widest gap-2">
+                {isGenerating && (
+                  <div id="ai-loading-container" className="py-12 text-center space-y-4 bg-[#141414] rounded-2xl border border-[#222222] p-6 animate-pulse">
+                    <div className="inline-flex py-1.5 px-3 rounded-full bg-[#201d1a] border border-[#f27d26]/30 text-[#f27d26] text-[10px] font-mono uppercase tracking-widest gap-2">
                       <Sparkles className="w-3.5 h-3.5 animate-spin" />
                       <span>Gemini prépare les fiches de cours...</span>
                     </div>
                     
-                    <blockquote className="text-xs text-gray-600 dark:text-gray-400 italic max-w-xs mx-auto">
+                    <blockquote className="text-xs text-gray-400 italic max-w-xs mx-auto">
                       {quotes[Math.floor(Date.now() / 3000) % quotes.length]}
                     </blockquote>
-
-                    <button
-                      onClick={handleStopGeneration}
-                      className="mt-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer inline-flex items-center gap-1.5"
-                    >
-                      <span>Arrêter la génération ⏹️</span>
-                    </button>
                   </div>
                 )}
 
@@ -775,26 +703,8 @@ export default function App() {
                 )}
 
                 {/* MAIN CONTENT BLOCK */}
-                {material && !generationError && (
+                {!isGenerating && !generationError && material && (
                   <div id="learning-content-card" className="space-y-4">
-                    {/* Streaming header status indicator */}
-                    {isGenerating && (
-                      <div className="flex items-center justify-between gap-2.5 py-2 px-3 bg-[#fdf3ec] dark:bg-[#1e130c]/30 rounded-xl border border-[#f27d26]/20 text-[#f27d26] text-[10px] font-mono uppercase tracking-widest font-black animate-pulse">
-                        <div className="flex items-center gap-2">
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Génération en direct des paragraphes...</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] text-gray-500 lowercase normal-case font-normal italic">reçu ({material.items?.length || 0} segments)</span>
-                          <button
-                            onClick={handleStopGeneration}
-                            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-[9px] uppercase tracking-wider font-bold rounded transition-all cursor-pointer"
-                          >
-                            Arrêter
-                          </button>
-                        </div>
-                      </div>
-                    )}
                     
                     {/* Header credentials */}
                     <div className="flex flex-wrap justify-between items-center text-[10px] uppercase font-mono tracking-widest text-[#666666] border-b border-[#222222] pb-2">
@@ -808,10 +718,10 @@ export default function App() {
 
                     {/* Content Title info */}
                     <div className="space-y-1">
-                      <h2 className="text-2xl font-serif font-black text-gray-900 dark:text-white hover:text-[#f27d26]/90 transition-colors leading-tight">
+                      <h2 className="text-2xl font-serif font-black text-white hover:text-[#f27d26]/90 transition-colors leading-tight">
                         {material.title}
                       </h2>
-                      <p className="text-xs font-serif italic text-gray-600 dark:text-gray-400">
+                      <p className="text-xs font-serif italic text-gray-400">
                         {material.titleTranslation}
                       </p>
                     </div>
@@ -840,9 +750,9 @@ export default function App() {
                             <div 
                               key={idx} 
                               id={`paragraph-block-${idx}`}
-                              className="bg-[#fafaf9] dark:bg-[#121212] border border-gray-200 dark:border-[#222222] rounded-xl p-4 space-y-3 hover:border-gray-300 dark:hover:border-[#333333] transition-all"
+                              className="bg-[#121212] border border-[#222222] rounded-xl p-4 space-y-3 hover:border-[#333333] transition-all"
                             >
-                              <div className="text-sm leading-relaxed text-gray-900 dark:text-white">
+                              <div className="text-sm leading-relaxed text-white">
                                 {segment.topic && (
                                   <div className="flex items-center gap-2 mb-3">
                                     <span className="inline-flex items-center rounded-md bg-[#f27d26]/10 px-2.5 py-1 text-xs font-extrabold font-mono uppercase tracking-wider text-[#f27d26] border border-[#f27d26]/20">
@@ -867,7 +777,7 @@ export default function App() {
                                           className={`cursor-pointer inline-block mx-0.5 border-b transition-all decoration-dotted ${
                                             isCurrentlySelected 
                                               ? "border-[#f27d26] text-[#f27d26] font-semibold bg-[#f27d26]/10 px-1 rounded-sm" 
-                                              : "border-gray-300 dark:border-[#444444] hover:border-[#f27d26] dark:hover:text-white"
+                                              : "border-[#444444] hover:border-[#f27d26] dark:hover:text-white"
                                           }`}
                                           title="Traduire"
                                         >
@@ -875,19 +785,19 @@ export default function App() {
                                         </span>
                                       );
                                     }
-                                    return <span key={tIdx} className="text-gray-400 dark:text-gray-500">{token.text}</span>;
+                                    return <span key={tIdx} className="text-gray-400">{token.text}</span>;
                                   })}
                                 </p>
                               </div>
 
                               {/* Target companion drawer translation toggler */}
-                              <div className="pt-2 border-t border-gray-150 dark:border-[#1d1d1d] flex items-start justify-between gap-2.5">
+                              <div className="pt-2 border-t border-[#1d1d1d] flex items-start justify-between gap-2.5">
                                 {isEnglishVisible ? (
-                                  <p className="text-[11px] text-gray-600 dark:text-gray-400 italic">
+                                  <p className="text-[11px] text-gray-400 italic">
                                     {segment.english}
                                   </p>
                                 ) : (
-                                  <p className="text-[11px] text-gray-400 dark:text-[#555555] italic">
+                                  <p className="text-[11px] text-[#555555] italic">
                                     Traduction masquée...
                                   </p>
                                 )}
@@ -897,7 +807,7 @@ export default function App() {
                                     ...prev,
                                     [idx]: !prev[idx]
                                   }))}
-                                  className="text-[9px] font-mono uppercase bg-gray-100 dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#333333] py-0.5 px-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-black/40 text-gray-700 dark:text-gray-450 block"
+                                  className="text-[9px] font-mono uppercase bg-[#1a1a1a] border border-[#333333] py-0.5 px-1.5 rounded-md hover:bg-black/40 text-gray-450 block"
                                 >
                                   {isEnglishVisible ? "Masquer" : "Révéler"}
                                 </button>
@@ -910,22 +820,22 @@ export default function App() {
 
                     {/* Cultural explanations snippet */}
                     {(material.explanation || (material.keyVocabulary && material.keyVocabulary.length > 0)) && (
-                      <div id="cultural-context-block" className="p-4 bg-gray-50 dark:bg-[#141414] border-l-2 border-[#f27d26] rounded-r-xl space-y-4">
+                      <div id="cultural-context-block" className="p-4 bg-[#141414] border-l-2 border-[#f27d26] rounded-r-xl space-y-4">
                         {material.explanation && (
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-1.5 text-[10px] text-[#f27d26] uppercase font-mono tracking-widest font-black">
                               <BookOpen className="w-4 h-4" />
                               <span>Notes Culturelles</span>
                             </div>
-                            <p className="text-xs text-gray-750 dark:text-gray-300 leading-relaxed font-serif">
+                            <p className="text-xs text-gray-300 leading-relaxed font-serif">
                               {material.explanation}
                             </p>
                           </div>
                         )}
 
                         {material.keyVocabulary && material.keyVocabulary.length > 0 && (
-                          <div className="space-y-2 pt-2.5 border-t border-gray-200 dark:border-[#222222]">
-                            <div className="flex items-center gap-1.5 text-[10px] text-gray-550 dark:text-gray-400 uppercase font-mono tracking-widest font-black">
+                          <div className="space-y-2 pt-2.5 border-t border-[#222222]">
+                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">
                               <Sparkles className="w-3.5 h-3.5 text-[#f27d26]" />
                               <span>Vocabulaire Clé &bull; Cliquez pour Analyser</span>
                             </div>
@@ -934,11 +844,11 @@ export default function App() {
                                 <button
                                   key={index}
                                   onClick={() => handleWordClick(vocab.word, "")}
-                                  className="text-xs bg-white dark:bg-[#1a1a1a] hover:bg-gray-100 dark:hover:bg-[#252525] border border-gray-200 dark:border-[#2d2d2d] hover:border-[#f27d26] text-gray-800 dark:text-white px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all text-left uppercase font-mono tracking-wide cursor-pointer"
+                                  className="text-xs bg-[#1a1a1a] hover:bg-[#252525] border border-[#2d2d2d] hover:border-[#f27d26] text-white px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all text-left uppercase font-mono tracking-wide"
                                 >
                                   <span className="font-bold text-[#f27d26] lowercase first-letter:uppercase">{vocab.word}</span>
-                                  <span className="text-gray-450 dark:text-gray-550 text-[10px]">&rarr;</span>
-                                  <span className="text-gray-600 dark:text-gray-400 lowercase text-[10px] normal-case">{vocab.translation}</span>
+                                  <span className="text-gray-550 text-[10px]">&rarr;</span>
+                                  <span className="text-gray-400 lowercase text-[10px] normal-case">{vocab.translation}</span>
                                 </button>
                               ))}
                             </div>
@@ -946,8 +856,8 @@ export default function App() {
                         )}
 
                         {material.sources && material.sources.length > 0 && (
-                          <div className="space-y-2 pt-2.5 border-t border-gray-200 dark:border-[#222222]">
-                            <div className="flex items-center gap-1.5 text-[10px] text-gray-550 dark:text-gray-400 uppercase font-mono tracking-widest font-black">
+                          <div className="space-y-2 pt-2.5 border-t border-[#222222]">
+                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">
                               <ExternalLink className="w-3.5 h-3.5 text-[#f27d26]" />
                               <span>Sources d'actualité réelles</span>
                             </div>
@@ -955,7 +865,7 @@ export default function App() {
                               {material.sources.map((source, index) => (
                                 <span
                                   key={index}
-                                  className="inline-flex items-center gap-1 rounded bg-[#fdf3ec] dark:bg-[#1e130c] px-2 py-0.5 text-[10px] font-extrabold font-mono uppercase tracking-wider text-[#f27d26] border border-[#f27d26]/20"
+                                  className="inline-flex items-center gap-1 rounded bg-[#1e130c] px-2 py-0.5 text-[10px] font-extrabold font-mono uppercase tracking-wider text-[#f27d26] border border-[#f27d26]/20"
                                 >
                                   📰 {source}
                                 </span>
@@ -1415,13 +1325,13 @@ export default function App() {
 
         {/* BOTTOM ACTION BAR (Unified Nav) */}
         {user && (
-          <footer className="p-4 border-t border-gray-200 dark:border-[#222222] bg-white dark:bg-[#0c0c0c] z-10 sticky bottom-0">
+          <footer className="p-4 border-t border-[#222222] bg-[#0c0c0c] z-10 sticky bottom-0">
             <div className="flex justify-between items-center text-xs">
-              <div className="flex gap-6 mx-auto">
+              <div className="flex gap-4">
                 <div 
                   onClick={() => setActiveTab("learn")}
-                  className={`group cursor-pointer flex flex-col items-center select-none transition-all ${
-                    activeTab === "learn" ? "text-gray-900 dark:text-white font-bold" : "text-gray-450 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  className={`group cursor-pointer flex flex-col items-center select-none ${
+                    activeTab === "learn" ? "text-white" : "opacity-45 hover:opacity-85"
                   }`}
                 >
                   <div className={`w-1.5 h-1.5 rounded-full mb-1 transition-all ${
@@ -1432,8 +1342,8 @@ export default function App() {
 
                 <div 
                   onClick={() => setActiveTab("review")}
-                  className={`group cursor-pointer flex flex-col items-center select-none transition-all ${
-                    activeTab === "review" ? "text-gray-900 dark:text-white font-bold" : "text-gray-450 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  className={`group cursor-pointer flex flex-col items-center select-none ${
+                    activeTab === "review" ? "text-white" : "opacity-45 hover:opacity-85"
                   }`}
                 >
                   <div className={`w-1.5 h-1.5 rounded-full mb-1 transition-all ${
@@ -1444,8 +1354,8 @@ export default function App() {
 
                 <div 
                   onClick={() => setActiveTab("settings")}
-                  className={`group cursor-pointer flex flex-col items-center select-none transition-all ${
-                    activeTab === "settings" ? "text-gray-900 dark:text-white font-bold" : "text-gray-450 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  className={`group cursor-pointer flex flex-col items-center select-none ${
+                    activeTab === "settings" ? "text-white" : "opacity-45 hover:opacity-85"
                   }`}
                 >
                   <div className={`w-1.5 h-1.5 rounded-full mb-1 transition-all ${
@@ -1454,6 +1364,18 @@ export default function App() {
                   <span className="text-[10px] uppercase font-bold tracking-widest">Paramètres</span>
                 </div>
               </div>
+
+              <div className="h-5 w-px bg-[#222222]" />
+
+              <button
+                id="ai-instant-generate-footer"
+                onClick={handleGenerateContent}
+                disabled={isGenerating}
+                className="text-[10px] font-black uppercase tracking-wider bg-white hover:bg-gray-100 text-black py-1.5 px-2.5 rounded-lg flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-[#f27d26]" />
+                <span>Nouveau 💡</span>
+              </button>
             </div>
           </footer>
         )}

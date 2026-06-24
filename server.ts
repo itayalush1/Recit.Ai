@@ -59,28 +59,17 @@ app.post("/api/generate-content", async (req, res) => {
         console.log("Using Google Search Grounding to fetch live, factual news reports from the past week...");
         const searchParams = `Summarize the top 6 to 8 major specific global news events (with massive focus on international relations, geopolitics, world leaders, specific summits, agreements, and key milestones in climate/economics/tech) that happened during the week leading up to ${currentDateString}. Ensure you include specific names of world leaders (such as Joe Biden, Donald Trump, Keir Starmer, Xi Jinping, Emmanuel Macron, Olaf Scholz, Narendra Modi, etc.), exact locations, summits, and direct quotes or numbers.`;
         
-        let searchResp = null;
-        for (const searchModel of ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]) {
-          try {
-            console.log(`Attempting search grounding with model: ${searchModel}`);
-            searchResp = await ai.models.generateContent({
-              model: searchModel,
-              contents: searchParams,
-              config: {
-                tools: [{ googleSearch: {} }]
-              }
-            });
-            if (searchResp && searchResp.text) {
-              console.log(`Google Search context retrieved successfully using ${searchModel}.`);
-              break;
-            }
-          } catch (searchErr: any) {
-            console.warn(`Search grounding failed for model ${searchModel}:`, searchErr.message || searchErr);
+        const searchResp = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: searchParams,
+          config: {
+            tools: [{ googleSearch: {} }]
           }
-        }
+        });
 
         if (searchResp && searchResp.text) {
           newsContext = searchResp.text;
+          console.log("Google Search context retrieved successfully.");
         }
       } catch (err: any) {
         console.warn("Google Search grounding failed, using default generator:", err.message || err);
@@ -149,14 +138,14 @@ app.post("/api/generate-content", async (req, res) => {
     Provide precise, paragraph/line-level direct English translations so the student can verify comprehension easily.
     The 'items' list should group the sentences/lines logically so they can be read segment-by-segment.`;
 
-    const modelCandidates = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
-    let streamSuccess = false;
+    const modelCandidates = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+    let responseText = "";
     let lastError: any = null;
 
     for (const modelName of modelCandidates) {
       try {
-        console.log(`Attempting stream generation with model: ${modelName}`);
-        const responseStream = await ai.models.generateContentStream({
+        console.log(`Attempting generation with model: ${modelName}`);
+        const response = await ai.models.generateContent({
           model: modelName,
           contents: promptText,
           config: {
@@ -205,29 +194,22 @@ app.post("/api/generate-content", async (req, res) => {
           }
         });
 
-        // Set Headers for streaming
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
-        res.setHeader("Transfer-Encoding", "chunked");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-
-        for await (const chunk of responseStream) {
-          if (chunk.text) {
-            res.write(chunk.text);
-          }
+        if (response && response.text) {
+          responseText = response.text;
+          break;
         }
-        streamSuccess = true;
-        break;
       } catch (err: any) {
-        console.warn(`Model ${modelName} stream failed or was overloaded:`, err.message || err);
+        console.warn(`Model ${modelName} failed or was overloaded:`, err.message || err);
         lastError = err;
       }
     }
 
-    if (!streamSuccess) {
+    if (!responseText) {
       throw lastError || new Error("All candidate text models failed of high-demand / overload.");
     }
-    res.end();
+
+    const parsedData = JSON.parse(responseText || "{}");
+    res.json(parsedData);
   } catch (error: any) {
     console.error("Content generation error:", error);
     res.status(500).json({ error: error.message || "An error occurred while generating French learning materials with Gemini." });
