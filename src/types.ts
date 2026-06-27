@@ -1,53 +1,70 @@
-export type ProficiencyLevel = "Beginner" | "Intermediate" | "Advanced";
+export type CEFRLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 
-export type ContentCategory = 
-  | "Latest News" 
-  | "Conversation" 
-  | "Short Story" 
-  | "Poem" 
-  | "Famous song";
+export type NewsCategory =
+  | "Top Stories"
+  | "Tech & AI"
+  | "Culture & Art"
+  | "Science"
+  | "France Politics"
+  | "Sports"
+  | "Business";
 
-export interface ContentItem {
-  french: string;
-  english: string;
-  speaker?: string;
-  topic?: string;
+export interface VocabItem {
+  id?: string;
+  word: string;
+  partOfSpeech: string;
+  definition: string;
+  englishTranslation: string;
+  example?: string;
+  cefrLevel?: CEFRLevel | string;
+  savedAt?: number;
+  box?: number;
+  nextReviewDate?: number;
 }
 
-export interface GeneratedMaterial {
+export type Flashcard = VocabItem;
+
+export interface GrammarPoint {
   title: string;
-  titleTranslation: string;
-  metadata?: string;
-  items: ContentItem[];
   explanation: string;
-  keyVocabulary?: {
-    word: string;
-    translation: string;
-  }[];
-  sources?: string[];
+  exampleFromText: string;
 }
 
-export interface WordAnalysis {
-  word: string;
-  translation: string;
-  pronunciation: string;
-  grammaticalContext: string;
-  frenchExample: string;
-  englishExample: string;
+export interface SourceCitation {
+  title: string;
+  uri: string;
 }
 
-export interface Flashcard {
+export interface Article {
   id: string;
-  word: string;
-  translation: string;
-  pronunciation: string;
-  grammaticalContext: string;
-  contextSentence: string;
-  frenchExample: string;
-  englishExample: string;
-  proficiency: ProficiencyLevel;
-  category: ContentCategory;
-  createdAt: number;
-  box: number; // For Leitner spaced repetition (1-5)
-  nextReviewDate: number; // Unix timestamp
+  title: string;
+  titleEnglish: string;
+  summary: string;
+  category: string;
+  cefrLevel: CEFRLevel;
+  publishedDate: string;
+  readTimeMinutes: number;
+  keyVocabulary: VocabItem[];
+  grammarPoint?: GrammarPoint;
+  culturalFact?: string;
+  sources?: SourceCitation[];
 }
+
+export interface QuizQuestion {
+  id: number;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
+export interface ExplanationResult {
+  selection: string;
+  literalTranslation: string;
+  naturalEnglish: string;
+  grammarBreakdown: string;
+  usageNotes: string;
+  pronunciationTip: string;
+}
+
+export type ActiveTab = "news" | "reader" | "vault" | "quiz" | "custom";

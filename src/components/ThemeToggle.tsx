@@ -11,8 +11,10 @@ export default function ThemeToggle({ darkMode, setDarkMode }: ThemeToggleProps)
   React.useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add("dark");
+      localStorage.setItem("theme_pref", "dark");
     } else {
       document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme_pref", "light");
     }
   }, [darkMode]);
 
@@ -20,7 +22,7 @@ export default function ThemeToggle({ darkMode, setDarkMode }: ThemeToggleProps)
     <button
       id="theme-toggle-btn"
       onClick={() => setDarkMode(!darkMode)}
-      className="p-2.5 rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-xs hover:bg-gray-50 dark:hover:bg-gray-850 text-gray-500 dark:text-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+      className="p-2.5 rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-xs hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
       aria-label="Toggle nighttime study theme"
     >
       <AnimatePresence mode="wait" initial={false}>

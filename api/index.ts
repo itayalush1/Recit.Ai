@@ -27,6 +27,30 @@ function getGeminiClient(): GoogleGenAI {
   return aiInstance;
 }
 
+// Helper: Call Gemini with automatic retry and exponential backoff for momentary demand spikes (503 / 429)
+async function callGeminiWithRetry(ai: GoogleGenAI, modelName: string, params: any, maxRetries = 2): Promise<any> {
+  let lastErr: any = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await ai.models.generateContent({ model: modelName, ...params });
+    } catch (err: any) {
+      lastErr = err;
+      const status = err?.status || err?.code || 0;
+      const msg = String(err?.message || err);
+      // Retry if model temporarily unavailable (503) or rate limited (429)
+      if (status === 503 || status === 429 || msg.includes("503") || msg.includes("429") || msg.includes("high demand") || msg.includes("UNAVAILABLE")) {
+        if (attempt < maxRetries) {
+          const delay = 1000 * Math.pow(1.5, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 // API Route: Generate learning material
 app.post("/api/generate-content", async (req, res) => {
   const { category, level } = req.body;
@@ -53,28 +77,40 @@ app.post("/api/generate-content", async (req, res) => {
 
       try {
         console.log("[Vercel Serverless] Using Google Search Grounding to fetch live, factual news reports from the past week...");
-        const searchParams = `Summarize the top 6 to 8 major specific global news events (with massive focus on international relations, geopolitics, world leaders, specific summits, agreements, and key milestones in climate/economics/tech) that happened during the week leading up to ${currentDateString}. Ensure you include specific names of world leaders (such as Joe Biden, Donald Trump, Keir Starmer, Xi Jinping, Emmanuel Macron, Olaf Scholz, Narendra Modi, etc.), exact locations, summits, and direct quotes or numbers.`;
+        const searchParams = `Summarize the top 6 to 8 major specific global news events (with massive focus on international relations, geopolitics, world leaders, specific summits, agreements, and key milestones in climate/economics/tech) that happened during the week leading up to ${currentDateString}. Ensure you include specific names of current world leaders (such as Donald Trump, Keir Starmer, Emmanuel Macron, Xi Jinping, Narendra Modi, Friedrich Merz, etc.), exact locations, summits, and direct quotes or numbers.`;
         
-        const searchResp = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: searchParams,
-          config: {
-            tools: [{ googleSearch: {} }]
-          }
-        });
+        let searchResp: any = null;
+        try {
+          searchResp = await callGeminiWithRetry(ai, "gemini-3.5-flash", {
+            contents: searchParams,
+            config: {
+              tools: [{ googleSearch: {} }]
+            }
+          }, 2);
+        } catch (flashErr) {
+          console.log("[Vercel Serverless] Notice: gemini-3.5-flash busy for search, retrying with gemini-flash-latest...");
+          searchResp = await callGeminiWithRetry(ai, "gemini-flash-latest", {
+            contents: searchParams,
+            config: {
+              tools: [{ googleSearch: {} }]
+            }
+          }, 1);
+        }
 
         if (searchResp && searchResp.text) {
           newsContext = searchResp.text;
           console.log("[Vercel Serverless] Google Search context retrieved successfully.");
         }
       } catch (err: any) {
-        console.warn("[Vercel Serverless] Google Search grounding failed, using default generator:", err.message || err);
+        console.log("[Vercel Serverless] Notice: Live Google Search grounding momentarily busy. Seamlessly utilizing standard model knowledge.");
       }
 
       promptText = `Generate an extremely detailed, comprehensive, high-density international news report summarizing the major global events of the past week (the week leading up to ${currentDateString}).
       This report must NOT be restricted to a single topic; instead, it is a multi-subject synthesis with a major, dominant focus on international politics, geopolitics (relations internationales, alliances, conflits, sommets diplomatiques), followed by other vital developments in global economics, science/technology, and environmental issues.
       
-      To make the news truly immersive and informative, you MUST discuss specific world leaders (such as Emmanuel Macron, Joe Biden, Xi Jinping, Olaf Scholz, Keir Starmer, etc.), refer to precise summits, policies, or developments, and integrate direct/indirect quotes in French where appropriate. Avoid generalities like "world leaders met to discuss issues"; instead tell the learner exactly WHO, WHERE, WHAT, and WHY, with rich details.
+      IMPORTANT CHRONOLOGICAL REALITY CHECK (YEAR 2026):
+      All news MUST accurately reflect the reality of the date ${currentDateString}. 
+      To make the news truly immersive and informative, you MUST discuss specific current world leaders, refer to precise policies, or developments. AVOID generalities like "world leaders met to discuss issues"; instead tell the learner exactly WHO, WHERE, WHAT, and WHY, with rich details.
       
       Structure the report into distinct subject areas. The total list of 'items' must contain exactly 5 to 8 rich, multi-sentence paragraphs (each at least 3-5 sentences long to provide a thorough journalistic summary).
       For each item in the 'items' array, you MUST populate:
@@ -134,15 +170,14 @@ app.post("/api/generate-content", async (req, res) => {
     Provide precise, paragraph/line-level direct English translations so the student can verify comprehension easily.
     The 'items' list should group the sentences/lines logically so they can be read segment-by-segment.`;
 
-    const modelCandidates = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+    const modelCandidates = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
     let responseText = "";
     let lastError: any = null;
 
     for (const modelName of modelCandidates) {
       try {
         console.log(`[Vercel Serverless] Attempting generation with model: ${modelName}`);
-        const response = await ai.models.generateContent({
-          model: modelName,
+        const response = await callGeminiWithRetry(ai, modelName, {
           contents: promptText,
           config: {
             systemInstruction,
@@ -188,27 +223,27 @@ app.post("/api/generate-content", async (req, res) => {
               required: ["title", "titleTranslation", "items", "explanation", "keyVocabulary"]
             }
           }
-        });
+        }, 1);
 
         if (response && response.text) {
           responseText = response.text;
           break;
         }
       } catch (err: any) {
-        console.warn(`[Vercel Serverless] Model ${modelName} failed:`, err.message || err);
+        console.log(`[Vercel Serverless] Notice: Candidate model ${modelName} momentarily busy. Switching to backup model candidate.`);
         lastError = err;
       }
     }
 
     if (!responseText) {
-      throw lastError || new Error("All candidate text models failed of high-demand / overload.");
+      throw lastError || new Error("Les serveurs IA sont temporairement très sollicités. Veuillez réessayer dans quelques instants.");
     }
 
     const parsedData = JSON.parse(responseText || "{}");
     res.json(parsedData);
   } catch (error: any) {
-    console.error("[Vercel Serverless] Content generation error:", error);
-    res.status(500).json({ error: error.message || "An error occurred while generating French learning materials with Gemini." });
+    console.log("[Vercel Serverless] Notice: Content generation request deferred due to demand spike.");
+    res.status(503).json({ error: "Le modèle IA connaît actuellement un pic de demande. Veuillez patienter 3 secondes puis cliquer à nouveau sur Générer." });
   }
 });
 

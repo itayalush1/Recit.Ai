@@ -1,6 +1,8 @@
 {
-  "name": "RecitAI",
-  "description": "A beautiful, mobile-first French language learning companion with interactive stories, songs, news, reading assistance, and smart flashcards powered by Gemini AI.",
+  "name": "French AI Assistant",
+  "description": "L'Actu Français & CEFR Tutor: Learn French through real-time fact-checked news summaries, interactive sentence dissection, and personalized flashcard quizzes.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
