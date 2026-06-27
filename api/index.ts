@@ -1,300 +1,302 @@
 import express from "express";
-import dotenv from "dotenv";
-import { GoogleGenAI, Type } from "@google/genai";
-
-dotenv.config();
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 app.use(express.json());
 
-// Lazy-initialized Gemini Client
-let aiInstance: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
-  if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable is required but missing. Please configure it in your Vercel Environment variables.");
+const apiRouter = express.Router();
+
+// Initialize Google Gen AI SDK
+const getAIClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY environment variable is required.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
+// --- BACKEND IN-MEMORY CACHE FOR INSTANT NEWS LOADING ---
+interface CacheEntry {
+  data: any;
+  timestamp: number;
+}
+const CACHE_TTL_MS = 45 * 60 * 1000; // 45 minutes cache
+const newsCache = new Map<string, CacheEntry>();
+
+// Helper to clean JSON string from markdown fences
+function cleanJson(text: string): string {
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.slice(7);
+  } else if (cleaned.startsWith("```")) {
+    cleaned = cleaned.slice(3);
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.slice(0, -3);
+  }
+  return cleaned.trim();
+}
+
+// 1. GET /news - Fact-checked news with CEFR grading & Google Search Grounding
+apiRouter.get("/news", async (req, res) => {
+  try {
+    const category = (req.query.category as string) || "General";
+    const level = (req.query.level as string) || "B1";
+    const refresh = req.query.refresh === "true";
+
+    const cacheKey = `${category}_${level}`;
+    const now = Date.now();
+
+    // Return cached news if fresh and refresh is not forced
+    if (!refresh && newsCache.has(cacheKey)) {
+      const cached = newsCache.get(cacheKey)!;
+      if (now - cached.timestamp < CACHE_TTL_MS) {
+        return res.json({
+          success: true,
+          articles: cached.data,
+          cached: true,
+          cachedAt: cached.timestamp
+        });
+      }
     }
-    aiInstance = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build-vercel',
-        }
+
+    const ai = getAIClient();
+
+    const prompt = `You are an expert French language tutor and professional news editor.
+Your task is to find 4 recent, real-world news events from the past few days related to the category: "${category}" (if General, cover major world/French events).
+Summarize each event in FRENCH tailored strictly for a student at the ${level} CEFR level.
+
+CEFR Level guidelines:
+- A1: Very short sentences, basic vocabulary (présent de l'indicatif), everyday high-frequency words.
+- A2: Simple compound sentences, passé composé/futur proche, common idioms.
+- B1: Clear standard French, imparfait/passé composé distinctions, relative pronouns, expressing opinions.
+- B2: Complex syntax, subjonctif, nuanced journalistic vocabulary, political/economic terms.
+- C1/C2: Native-level journalistic prose, sophisticated idioms, subtle cultural references, advanced grammar structures.
+
+You MUST use Google Search Grounding to ensure all events are factual and recent.
+
+CRITICAL: Respond ONLY with a valid JSON array matching this exact structure (no commentary outside the JSON array):
+[
+  {
+    "id": "unique-string-id-1",
+    "title": "Headline in French graded for ${level}",
+    "titleEnglish": "English translation of headline",
+    "summary": "3 to 4 well-structured paragraphs in French discussing the news event at ${level} difficulty.",
+    "category": "${category}",
+    "cefrLevel": "${level}",
+    "publishedDate": "e.g. Aujourd'hui or Hier",
+    "readTimeMinutes": 3,
+    "keyVocabulary": [
+      {
+        "word": "French word/phrase in article",
+        "partOfSpeech": "nom m / verbe / adj",
+        "definition": "Simple definition in French",
+        "englishTranslation": "English translation"
+      }
+    ],
+    "grammarPoint": {
+      "title": "Grammar concept used in text (e.g. Le Subjonctif)",
+      "explanation": "Brief explanation in English or French appropriate for ${level}",
+      "exampleFromText": "Exact quote from summary demonstrating it"
+    },
+    "culturalFact": "One fascinating cultural or contextual insight related to this story."
+  }
+]`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        temperature: 0.3,
+        tools: [{ googleSearch: {} }]
       }
     });
-  }
-  return aiInstance;
-}
 
-// Helper: Call Gemini with automatic retry and exponential backoff for momentary demand spikes (503 / 429)
-async function callGeminiWithRetry(ai: GoogleGenAI, modelName: string, params: any, maxRetries = 2): Promise<any> {
-  let lastErr: any = null;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const rawText = response.text || "[]";
+    const cleaned = cleanJson(rawText);
+    let articles = [];
+
     try {
-      return await ai.models.generateContent({ model: modelName, ...params });
-    } catch (err: any) {
-      lastErr = err;
-      const status = err?.status || err?.code || 0;
-      const msg = String(err?.message || err);
-      // Retry if model temporarily unavailable (503) or rate limited (429)
-      if (status === 503 || status === 429 || msg.includes("503") || msg.includes("429") || msg.includes("high demand") || msg.includes("UNAVAILABLE")) {
-        if (attempt < maxRetries) {
-          const delay = 1000 * Math.pow(1.5, attempt);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
-        }
-      }
-      throw err;
-    }
-  }
-  throw lastErr;
-}
-
-// API Route: Generate learning material
-app.post("/api/generate-content", async (req, res) => {
-  const { category, level } = req.body;
-
-  if (!category || !level) {
-    res.status(400).json({ error: "Missing category or proficiency level." });
-    return;
-  }
-
-  try {
-    const ai = getGeminiClient();
-    const isNews = category === "Latest News";
- 
-    // Build focused prompts based on category & proficiency level
-    let promptText = "";
-    let newsContext = "";
-
-    if (isNews) {
-      const currentDateString = new Date().toLocaleDateString('fr-FR', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-
-      try {
-        console.log("[Vercel Serverless] Using Google Search Grounding to fetch live, factual news reports from the past week...");
-        const searchParams = `Summarize the top 6 to 8 major specific global news events (with massive focus on international relations, geopolitics, world leaders, specific summits, agreements, and key milestones in climate/economics/tech) that happened during the week leading up to ${currentDateString}. Ensure you include specific names of current world leaders (such as Donald Trump, Keir Starmer, Emmanuel Macron, Xi Jinping, Narendra Modi, Friedrich Merz, etc.), exact locations, summits, and direct quotes or numbers.`;
-        
-        let searchResp: any = null;
-        try {
-          searchResp = await callGeminiWithRetry(ai, "gemini-3.5-flash", {
-            contents: searchParams,
-            config: {
-              tools: [{ googleSearch: {} }]
-            }
-          }, 2);
-        } catch (flashErr) {
-          console.log("[Vercel Serverless] Notice: gemini-3.5-flash busy for search, retrying with gemini-flash-latest...");
-          searchResp = await callGeminiWithRetry(ai, "gemini-flash-latest", {
-            contents: searchParams,
-            config: {
-              tools: [{ googleSearch: {} }]
-            }
-          }, 1);
-        }
-
-        if (searchResp && searchResp.text) {
-          newsContext = searchResp.text;
-          console.log("[Vercel Serverless] Google Search context retrieved successfully.");
-        }
-      } catch (err: any) {
-        console.log("[Vercel Serverless] Notice: Live Google Search grounding momentarily busy. Seamlessly utilizing standard model knowledge.");
-      }
-
-      promptText = `Generate an extremely detailed, comprehensive, high-density international news report summarizing the major global events of the past week (the week leading up to ${currentDateString}).
-      This report must NOT be restricted to a single topic; instead, it is a multi-subject synthesis with a major, dominant focus on international politics, geopolitics (relations internationales, alliances, conflits, sommets diplomatiques), followed by other vital developments in global economics, science/technology, and environmental issues.
-      
-      IMPORTANT CHRONOLOGICAL REALITY CHECK (YEAR 2026):
-      All news MUST accurately reflect the reality of the date ${currentDateString}. 
-      To make the news truly immersive and informative, you MUST discuss specific current world leaders, refer to precise policies, or developments. AVOID generalities like "world leaders met to discuss issues"; instead tell the learner exactly WHO, WHERE, WHAT, and WHY, with rich details.
-      
-      Structure the report into distinct subject areas. The total list of 'items' must contain exactly 5 to 8 rich, multi-sentence paragraphs (each at least 3-5 sentences long to provide a thorough journalistic summary).
-      For each item in the 'items' array, you MUST populate:
-      1. 'topic': A short, clear category name (e.g., "GÉOPOLITIQUE INTERNATIONALE", "ÉCONOMIE MONDIALE", "SCIENCE & INNOVATION", "CLIMAT & ENVIRONNEMENT"). This topic MUST be placed ONLY in the 'topic' field. Do NOT include brackets like [GÉOPOLITIQUE] inside the 'french' or 'english' text itself.
-      2. 'french': The detailed news paragraph in French at the requested level.
-      3. 'english': The highly polished English translation of the news paragraph.
-      
-      Adapt the French grammatical complexity and vocabulary strictly to a "${level}" proficiency level to help the user learn French and stay on top of world affairs:
-      - Beginner (A1/A2): Use active voice, simple tenses (présent, occasionally passé composé), clear/active subject-verb-object structures, and accessible common vocabulary. Do NOT omit named leaders or specific countries, but explain their actions simply.
-      - Intermediate (B1/B2): Introduce compound structures, standard press vocabulary, varied tenses (futur simple, imparfait, conditionnel), and idiomatic French of moderate complexity.
-      - Advanced (C1/C2): Provide authentic, elegant, premium journalistic level French (resembling Le Monde or Libération). Use complex syntax (passif, subjonctif, participe présent, terms of diplomacy and geopolitics).
-      
-      In the 'metadata' field, specify "Synthèse Géopolitique & Actualités Globales" and the date range leading up to ${currentDateString}.
-      In the 'sources' field of the JSON output, you MUST list 2 to 4 real high-quality news publication domains or outlets from which these events are sourced (e.g., ["Le Monde", "France 24", "Le Figaro", "Reuters", "AFP"]) based on the provided grounded search context.`;
-
-      if (newsContext) {
-        promptText = `You are provided with real-time Google Search context summarizing the real, factual world events of the past week:
-        
-        === SEARCH REALITY CONTEXT ===
-        ${newsContext}
-        ==============================
-        
-        Using the above search-grounded facts as your sole news source and reference material, translate, elaborate, and construct the requested French learning content according to these exact instructions:
-        
-        ` + promptText;
-      }
-    } else if (category === "Conversation") {
-      promptText = `Create a realistic conversation/dialogue in French between 2 characters.
-      Aesthetic: Practical everyday situations (ordering food, asking for directions, planning a trip, workspace dynamic).
-      Tailor the vocabulary, tenses, and speed strictly for a "${level}" level learner.
-      Important: Under the 'items' list, you can provide up to 8 dialog items. Each item must specify which speaker is talking in the 'speaker' property.`;
-    } else if (category === "Short Story") {
-      promptText = `Write an engaging short story in French.
-      Aesthetic: A captivating narrative (mystery, heartwarming interaction, local legend, or sci-fi snippet).
-      Tailor the vocabulary, grammatical structures, and complexity precisely for "${level}" proficiency level.
-      Split the story into cohesive paragraphs, and provide the paragraph-level English translations in the 'items' list.`;
-    } else if (category === "Poem") {
-      promptText = `Create a beautiful poem in French (either a classic by a famous French poet tailored for this level, or an original modern creation).
-      Aesthetic: Atmospheric, rhythmic, and poetic.
-      Tailor the linguistic sophistication precisely for the "${level}" proficiency level.
-      In 'metadata', provide the author name (or state "Original AI Poem" if newly created).
-      Provide line-by-line or stanza-by-stanza translations in the 'items' list.`;
-    } else if (category === "Famous song") {
-      promptText = `Provide the lyrics to a famous, culturally significant French song (e.g., songs by Édith Piaf, Jacques Brel, Stromae, Serge Gainsbourg, Céline Dion, Daft Punk/French Touch, or modern hits).
-      Aesthetic: Melodic, nostalgic, or energetic; culturally authentic.
-      Adapt or select lyrics/verses that are readable and beneficial for a French learner at "${level}" proficiency level.
-      In 'metadata', specify the artist and peak year.
-      Provide the song verses in the 'items' list along with line-by-line English translations.
-      Include a learning tip or brief note explaining the song's cultural context block in the 'explanation' field.`;
-    } else {
-      promptText = `Generate custom educational materials in French for the category "${category}" targeting a "${level}" proficiency level.`;
-    }
-
-    const systemInstruction = `You are an expert bilingual French-English languaging tutor.
-    Your objective is to generate accurate, helpful educational content in French tailored perfectly to the learner's chosen proficiency level: "${level}".
-    You must always respond in valid JSON matching the specified schema.
-    Provide precise, paragraph/line-level direct English translations so the student can verify comprehension easily.
-    The 'items' list should group the sentences/lines logically so they can be read segment-by-segment.`;
-
-    const modelCandidates = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
-    let responseText = "";
-    let lastError: any = null;
-
-    for (const modelName of modelCandidates) {
-      try {
-        console.log(`[Vercel Serverless] Attempting generation with model: ${modelName}`);
-        const response = await callGeminiWithRetry(ai, modelName, {
-          contents: promptText,
-          config: {
-            systemInstruction,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING, description: "The title of the piece in French." },
-                titleTranslation: { type: Type.STRING, description: "The English translation of the title." },
-                metadata: { type: Type.STRING, description: "Artist name, author, news outlet, or historical context identifier." },
-                items: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      french: { type: Type.STRING, description: "The sentence/paragraph or lyric line in French." },
-                      english: { type: Type.STRING, description: "English translation of this segment." },
-                      speaker: { type: Type.STRING, description: "Optional speaker name for conversations (e.g. Sophie, Jean). Otherwise omit or leave dry." },
-                      topic: { type: Type.STRING, description: "Optional category/subject tag name, used primarily for Latest News to group developments (e.g. GÉOPOLITIQUE INTERNATIONALE, ÉCONOMIE MONDIALE, SCIENCE, CLIMAT)" }
-                    },
-                    required: ["french", "english"]
-                  }
-                },
-                explanation: { type: Type.STRING, description: "A learning note or cultural tip in English." },
-                keyVocabulary: {
-                  type: Type.ARRAY,
-                  description: "A list of 4 to 6 essential or interesting French vocabulary words from the text.",
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      word: { type: Type.STRING, description: "The French word or short expression (exactly as written in the text, clean, singular/infinitive or as parsed)." },
-                      translation: { type: Type.STRING, description: "English translation of this word." }
-                    },
-                    required: ["word", "translation"]
-                  }
-                },
-                sources: {
-                  type: Type.ARRAY,
-                  description: "Optional list of real news sources, agencies, or publication names related to this event summary.",
-                  items: { type: Type.STRING }
-                }
-              },
-              required: ["title", "titleTranslation", "items", "explanation", "keyVocabulary"]
-            }
-          }
-        }, 1);
-
-        if (response && response.text) {
-          responseText = response.text;
-          break;
-        }
-      } catch (err: any) {
-        console.log(`[Vercel Serverless] Notice: Candidate model ${modelName} momentarily busy. Switching to backup model candidate.`);
-        lastError = err;
+      articles = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error("JSON parse error for news:", parseErr, "\nRaw:", rawText);
+      // Fallback recovery if model generated markdown before JSON
+      const match = rawText.match(/\[\s*\{.*\}\s*\]/s);
+      if (match) {
+        articles = JSON.parse(match[0]);
+      } else {
+        throw new Error("Failed to parse AI news response into JSON.");
       }
     }
 
-    if (!responseText) {
-      throw lastError || new Error("Les serveurs IA sont temporairement très sollicités. Veuillez réessayer dans quelques instants.");
-    }
+    // Extract grounding web search URLs if available
+    const searchChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const webSources = searchChunks
+      .map((c: any) => c.web?.uri ? { title: c.web.title || "Source", uri: c.web.uri } : null)
+      .filter(Boolean);
 
-    const parsedData = JSON.parse(responseText || "{}");
-    res.json(parsedData);
-  } catch (error: any) {
-    console.log("[Vercel Serverless] Notice: Content generation request deferred due to demand spike.");
-    res.status(503).json({ error: "Le modèle IA connaît actuellement un pic de demande. Veuillez patienter 3 secondes puis cliquer à nouveau sur Générer." });
-  }
-});
+    // Attach grounding sources to articles
+    articles = articles.map((art: any, index: number) => ({
+      ...art,
+      sources: webSources.slice(index * 2, (index + 1) * 2).length > 0
+        ? webSources.slice(index * 2, (index + 1) * 2)
+        : webSources.slice(0, 2)
+    }));
 
-// API Route: Analyze individual clicked word using simple Google Translate lookup
-app.post("/api/word-context", async (req, res) => {
-  const { word, sentence } = req.body;
-
-  if (!word) {
-    res.status(400).json({ error: "Missing word to translate." });
-    return;
-  }
-
-  try {
-    const cleanWord = word.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, "");
-
-    // Query Google Translate Translation API (free gtx client) for the individual word
-    const wordUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=fr&tl=en&dt=t&q=${encodeURIComponent(cleanWord)}`;
-    const wordResp = await fetch(wordUrl);
-    const wordData = await wordResp.json() as any;
-    const translation = wordData?.[0]?.[0]?.[0] || cleanWord;
-
-    // Optional query for the whole context sentence translation
-    let sentenceTranslation = "";
-    if (sentence) {
-      try {
-        const sentenceUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=fr&tl=en&dt=t&q=${encodeURIComponent(sentence)}`;
-        const sentenceResp = await fetch(sentenceUrl);
-        const sentenceData = await sentenceResp.json() as any;
-        sentenceTranslation = sentenceData?.[0]?.[0]?.[0] || "";
-      } catch (err) {
-        console.warn("[Vercel Serverless] Context sentence translation failed, proceeding with word only.");
-      }
-    }
+    // Save to cache
+    newsCache.set(cacheKey, {
+      data: articles,
+      timestamp: now
+    });
 
     res.json({
-      word: cleanWord,
-      translation: translation,
-      pronunciation: `[ ${cleanWord} ]`,
-      grammaticalContext: "Mot vocabulaire",
-      frenchExample: sentence || cleanWord,
-      englishExample: sentenceTranslation || "Context translation"
+      success: true,
+      articles,
+      cached: false,
+      cachedAt: now
     });
+
   } catch (error: any) {
-    console.error("[Vercel Serverless] Word context translation error:", error);
-    res.status(500).json({ error: "Service de traduction indisponible. Veuillez réessayer." });
+    console.error("Error generating news:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch news."
+    });
   }
 });
 
-// Wildcard routing to handle fallbacks if any other endpoint is requested under /api
-app.all("/api/*", (req, res) => {
-  res.status(404).json({ error: `API route ${req.path} not found.` });
+// 2. POST /generate-topic - Generate custom reading material on any interest
+apiRouter.post("/generate-topic", async (req, res) => {
+  try {
+    const { topic, level } = req.body;
+    if (!topic || !level) {
+      return res.status(400).json({ error: "Topic and CEFR level are required." });
+    }
+
+    const ai = getAIClient();
+    const prompt = `Generate an engaging French article about "${topic}" tailored strictly for a French learner at CEFR level ${level}.
+
+Respond ONLY with a valid JSON object matching this exact schema:
+{
+  "id": "custom-" + Date.now(),
+  "title": "Engaging title in French",
+  "titleEnglish": "English translation",
+  "summary": "4 paragraphs of French text about ${topic} at ${level} difficulty.",
+  "category": "Custom Topic",
+  "cefrLevel": "${level}",
+  "publishedDate": "Sur mesure",
+  "readTimeMinutes": 4,
+  "keyVocabulary": [
+    {
+      "word": "French word",
+      "partOfSpeech": "nom / verbe / adj",
+      "definition": "French definition",
+      "englishTranslation": "English equivalent"
+    }
+  ],
+  "grammarPoint": {
+    "title": "Grammar highlight",
+    "explanation": "Brief explanation",
+    "exampleFromText": "Quote from text"
+  },
+  "culturalFact": "An interesting trivia related to ${topic} in France or French culture."
+}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: { temperature: 0.5 }
+    });
+
+    const parsed = JSON.parse(cleanJson(response.text || "{}"));
+    res.json({ success: true, article: parsed });
+  } catch (err: any) {
+    console.error("Error generating custom topic:", err);
+    res.status(500).json({ error: err.message || "Failed to generate topic." });
+  }
 });
+
+// 3. POST /explain - Dissect selected sentence or word
+apiRouter.post("/explain", async (req, res) => {
+  try {
+    const { selection, fullText, level } = req.body;
+    if (!selection) {
+      return res.status(400).json({ error: "Selection is required." });
+    }
+
+    const ai = getAIClient();
+    const prompt = `A student learning French at CEFR level ${level || "B1"} selected this exact phrase/sentence: "${selection}"
+Context from the full article: "${fullText?.slice(0, 500) || selection}"
+
+Explain this selection clearly in JSON format:
+{
+  "selection": "${selection}",
+  "literalTranslation": "Exact English translation",
+  "naturalEnglish": "Natural English equivalent",
+  "grammarBreakdown": "Break down the grammar, verb tenses, agreements, or prepositions used.",
+  "usageNotes": "When and how native French speakers use this phrase.",
+  "pronunciationTip": "Phonetic hint or liaisons to watch out for."
+}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: { temperature: 0.2 }
+    });
+
+    const parsed = JSON.parse(cleanJson(response.text || "{}"));
+    res.json({ success: true, explanation: parsed });
+  } catch (err: any) {
+    console.error("Error explaining text:", err);
+    res.status(500).json({ error: err.message || "Failed to explain selection." });
+  }
+});
+
+// 4. POST /quiz - Generate a comprehension quiz for an article
+apiRouter.post("/quiz", async (req, res) => {
+  try {
+    const { articleTitle, articleText, level } = req.body;
+    if (!articleText) {
+      return res.status(400).json({ error: "Article text is required." });
+    }
+
+    const ai = getAIClient();
+    const prompt = `Based on this French article titled "${articleTitle}":
+"${articleText}"
+
+Create a 4-question interactive multiple choice quiz for a student at CEFR ${level || "B1"} level. Include 2 reading comprehension questions and 2 vocabulary/grammar questions.
+
+Respond ONLY with a JSON array:
+[
+  {
+    "id": 1,
+    "question": "Question text in French",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctIndex": 1,
+    "explanation": "Why this answer is correct (in English or simple French)"
+  }
+]`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: { temperature: 0.3 }
+    });
+
+    const parsed = JSON.parse(cleanJson(response.text || "[]"));
+    res.json({ success: true, quiz: parsed });
+  } catch (err: any) {
+    console.error("Error generating quiz:", err);
+    res.status(500).json({ error: err.message || "Failed to generate quiz." });
+  }
+});
+
+// Health check route
+apiRouter.get("/health", (req, res) => {
+  res.json({ status: "ok", uptime: process.uptime() });
+});
+
+app.use("/api", apiRouter);
+app.use("/", apiRouter);
 
 export default app;
